@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recomendador de Papers</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+  :root{
+    --bg:#f7f7f5; --panel:#ffffff; --ink:#1c1c1a; --muted:#6b6b66; --line:#e3e3de;
+    --accent:#2f5bd3; --accent-soft:#e8eefc; --edge:#5a6b8c; --warn:#b4471f;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#141413; --panel:#1d1d1b; --ink:#ecebe6; --muted:#9d9c95; --line:#33332f;
+      --accent:#7c9cf5; --accent-soft:#232c45; --edge:#9fb0d0; --warn:#f08a5d; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 16px 60px}
+  header h1{font-size:22px;margin:0 0 4px;font-weight:650;letter-spacing:-.01em}
+  header p{margin:0;color:var(--muted);font-size:13.5px}
+  form{display:flex;gap:10px;margin:20px 0 6px;flex-wrap:wrap}
+  #q{flex:1 1 420px;font:inherit;font-size:16px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)}
+  #q:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  label.k{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13.5px}
+  #k{width:70px;font:inherit;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)}
+  button{font:inherit;padding:11px 18px;border:0;border-radius:10px;background:var(--accent);color:#fff;cursor:pointer;font-weight:600}
+  .status{min-height:22px;color:var(--muted);font-size:13.5px;margin-bottom:12px}
+  .status.err{color:var(--warn)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 14px}
+  .chip{font-size:12.5px;padding:3px 9px;border-radius:999px;background:var(--accent-soft);color:var(--ink)}
+  .chip b{font-weight:600}
+  section.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:18px}
+  section h2{font-size:15px;margin:0 0 10px;font-weight:650}
+  ol#lista{list-style:none;margin:0;padding:0;max-height:560px;overflow:auto}
+  ol#lista li{display:grid;grid-template-columns:44px 1fr auto;gap:10px;padding:10px 6px;border-top:1px solid var(--line);cursor:pointer;border-radius:8px}
+  ol#lista li:first-child{border-top:0}
+  ol#lista li.hl{background:var(--accent-soft)}
+  .pid{font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}
+  .ttl{font-weight:560}
+  .ttl a{color:inherit;text-decoration:none} .ttl a:hover{text-decoration:underline}
+  .meta{color:var(--muted);font-size:12.5px;margin-top:2px}
+  .abs{color:var(--muted);font-size:13px;margin-top:6px;display:none}
+  li.open .abs{display:block}
+  .score{font-variant-numeric:tabular-nums;font-size:13px;color:var(--muted);text-align:right;white-space:nowrap}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+  .grafo-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+  .ctrl{display:flex;gap:14px;align-items:center;color:var(--muted);font-size:13px;flex-wrap:wrap}
+  .ctrl input[type=range]{width:160px}
+  .tabs button{background:transparent;color:var(--muted);border:1px solid var(--line);padding:5px 12px;font-weight:500;font-size:13px}
+  .tabs button.on{background:var(--accent-soft);color:var(--ink);border-color:var(--accent)}
+  #vis{width:100%;height:600px;position:relative}
+  #vis svg{width:100%;height:100%;display:block}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin-top:8px}
+  .tip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12.5px;max-width:320px;box-shadow:0 4px 18px rgba(0,0,0,.12);display:none;z-index:2}
+  .nota{font-size:12.5px;color:var(--muted);margin-top:8px}
+  .vacio{color:var(--muted);text-align:center;padding:40px 0}
+  @media (max-width:640px){ #vis{height:440px} ol#lista li{grid-template-columns:36px 1fr} .score{grid-column:2;text-align:left} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Recomendador de papers</h1>
+    <p id="info">Cargando…</p>
+  </header>
+
+  <form id="f" autocomplete="off">
+    <input id="q" placeholder="Ej.: ventilación mecánica en pacientes de cuidados intensivos" autofocus>
+    <label class="k">k <input id="k" type="number" min="2" max="60" value="20"></label>
+    <button type="submit">Buscar</button>
+  </form>
+  <div class="status" id="status">Escribe una consulta y presiona Enter.</div>
+  <div class="chips" id="chips"></div>
+
+  <section class="card">
+    <h2 id="tit-lista">Recomendaciones</h2>
+    <ol id="lista"><div class="vacio">Sin resultados todavía.</div></ol>
+  </section>
+
+  <section class="card">
+    <div class="grafo-head">
+      <h2 style="margin:0">Grafo ponderado de la matriz de adyacencia</h2>
+      <div class="ctrl">
+        <span class="tabs"><button type="button" id="t-g" class="on">Grafo</button> <button type="button" id="t-m">Matriz</button></span>
+        <label id="lbl-umbral">Aristas: top <span id="pct">30</span>% <input id="umbral" type="range" min="5" max="100" value="30"></label>
+      </div>
+    </div>
+    <div id="vis"><div class="vacio">El grafo aparece después de una búsqueda.</div><div class="tip" id="tip"></div></div>
+    <div class="legend" id="legend"></div>
+    <div class="nota" id="nota"></div>
+  </section>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const color = d3.scaleOrdinal(["#2f5bd3","#d1603d","#2a9d6f","#9b59b6","#c49a1a","#d14d8a","#3aa0c8","#7a8a2e","#8d6e63","#5c6bc0"]);
+let datos = null, vista = "grafo", seleccionado = null;
+
+fetch("/api/info").then(r=>r.json()).then(i=>{
+  $("#info").textContent = `${i.n_papers.toLocaleString("es")} papers · recuperación con ${i.extractor} (coseno) · tópico de la consulta con ${i.clasificador}`;
+  $("#k").value = i.k_defecto; $("#k").max = i.k_max;
+  color.domain(i.topicos);
+});
+
+$("#f").addEventListener("submit", async e=>{
+  e.preventDefault();
+  const q = $("#q").value.trim(); if(!q) return;
+  const st = $("#status"); st.className="status"; st.textContent="Buscando…";
+  try{
+    const r = await fetch(`/api/buscar?q=${encodeURIComponent(q)}&k=${$("#k").value}`);
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.error || "Error");
+    datos = j; seleccionado = null; pintar();
+    st.textContent = `${j.en_vocab.length}/${j.tokens.length} términos de la consulta en el vocabulario: ${j.en_vocab.join(", ")}`;
+  }catch(err){ st.className="status err"; st.textContent = err.message; }
+});
+
+function pintar(){
+  const c = $("#chips"); c.innerHTML = "";
+  datos.topico_consulta.forEach(t=>{
+    const s=document.createElement("span"); s.className="chip";
+    s.innerHTML=`<span class="dot" style="background:${color(t.topic)}"></span>${t.topic} <b>${(t.p*100).toFixed(0)}%</b>`; c.appendChild(s);
+  });
+  c.insertAdjacentHTML("afterbegin",`<span class="chip" style="background:transparent;padding-left:0">Tópico estimado de la consulta:</span>`);
+  $("#tit-lista").textContent = `Top-${datos.k} recomendaciones`;
+  const ol = $("#lista"); ol.innerHTML="";
+  datos.papers.forEach(p=>{
+    const li=document.createElement("li"); li.dataset.id=p.id;
+    const titulo = p.url ? `<a href="${p.url}" target="_blank" rel="noopener">${esc(p.title)}</a>` : esc(p.title);
+    li.innerHTML=`<div class="pid">${p.id}</div>
+      <div><div class="ttl">${titulo}</div>
+      <div class="meta"><span class="dot" style="background:${color(p.topic)}"></span>${esc(p.topic)}${p.year?` · ${p.year}`:""}${p.fuente?` · ${esc(p.fuente)}`:""}${p.authors?` · ${esc(recortar(p.authors,90))}`:""}</div>
+      <div class="abs">${esc(p.abstract)}</div></div>
+      <div class="score">cos ${p.score.toFixed(3)}</div>`;
+    li.onclick=e=>{ if(e.target.tagName==="A") return; li.classList.toggle("open"); resaltar(p.id); };
+    ol.appendChild(li);
+  });
+  const usados=[...new Set(datos.papers.map(p=>p.topic))];
+  $("#legend").innerHTML = usados.map(t=>`<span><span class="dot" style="background:${color(t)}"></span>${esc(t)}</span>`).join("");
+  dibujar();
+}
+
+function aristas(){
+  const A=datos.adyacencia, n=A.length, todas=[];
+  for(let i=0;i<n;i++) for(let j=i+1;j<n;j++) todas.push({source:i,target:j,w:A[i][j]});
+  todas.sort((a,b)=>b.w-a.w);
+  const pct=+$("#umbral").value;
+  const sel=todas.slice(0, Math.max(1, Math.round(todas.length*pct/100)));
+  // cada nodo conserva al menos su arista más fuerte (evita nodos aislados)
+  const clave=e=>e.source+"-"+e.target, ya=new Set(sel.map(clave));
+  for(let i=0;i<n;i++){
+    const mejor=todas.find(e=>e.source===i||e.target===i);
+    if(mejor && !ya.has(clave(mejor))){ sel.push(mejor); ya.add(clave(mejor)); }
+  }
+  const ws=todas.map(e=>e.w), mn=d3.min(ws), mx=d3.max(ws);
+  return {sel, mn, mx, total:todas.length};
+}
+
+function dibujar(){
+  if(!datos) return;
+  const vis=$("#vis"); vis.querySelectorAll("svg,.vacio").forEach(n=>n.remove());
+  $("#lbl-umbral").style.display = vista==="grafo" ? "" : "none";
+  vista==="grafo" ? grafo(vis) : matriz(vis);
+}
+
+function grafo(vis){
+  const W=vis.clientWidth, H=vis.clientHeight;
+  const {sel, mn, mx, total}=aristas();
+  const norm = w => mx>mn ? (w-mn)/(mx-mn) : 1;
+  const sc=datos.papers.map(p=>p.score), smin=d3.min(sc), smax=d3.max(sc);
+  const radio = s => 9 + 13*(smax>smin ? (s-smin)/(smax-smin) : 1);
+  const nodes=datos.papers.map((p,i)=>({...p,i}));
+  const links=sel.map(e=>({...e}));
+  $("#nota").textContent = `Mostrando ${links.length} de ${total} aristas (top ${$("#umbral").value}% + la arista más fuerte de cada nodo) (pesos = similitud coseno entre abstracts, rango ${mn.toFixed(3)}–${mx.toFixed(3)}). Grosor y cercanía ∝ peso normalizado; tamaño del nodo ∝ similitud con la consulta. Arrastra nodos, rueda para zoom.`;
+
+  const svg=d3.select(vis).append("svg").attr("viewBox",[0,0,W,H]);
+  const g=svg.append("g");
+  svg.call(d3.zoom().scaleExtent([.3,4]).on("zoom",e=>g.attr("transform",e.transform)));
+  const link=g.append("g").selectAll("line").data(links).join("line")
+    .attr("stroke","var(--edge)").attr("stroke-linecap","round")
+    .attr("stroke-width",d=>.6+5*norm(d.w)).attr("stroke-opacity",d=>.15+.65*norm(d.w));
+  const node=g.append("g").selectAll("g").data(nodes).join("g").style("cursor","pointer");
+  node.append("circle").attr("r",d=>radio(d.score)).attr("fill",d=>color(d.topic))
+    .attr("stroke","var(--panel)").attr("stroke-width",2);
+  node.append("text").text(d=>d.id).attr("text-anchor","middle").attr("dy","0.35em")
+    .attr("font-size",10.5).attr("font-weight",700).attr("fill","#fff").style("pointer-events","none");
+
+  const tip=$("#tip");
+  node.on("mouseenter",(e,d)=>{
+      tip.style.display="block";
+      tip.innerHTML=`<b>${d.id}</b> · cos con consulta ${d.score.toFixed(3)}<br>${esc(recortar(d.title,160))}<br><span style="color:var(--muted)">${esc(d.topic)}</span>`;
+      link.attr("stroke",l=>l.source.i===d.i||l.target.i===d.i?"var(--accent)":"var(--edge)");
+    })
+    .on("mousemove",e=>{ const r=vis.getBoundingClientRect(); tip.style.left=(e.clientX-r.left+14)+"px"; tip.style.top=(e.clientY-r.top+10)+"px"; })
+    .on("mouseleave",()=>{ tip.style.display="none"; link.attr("stroke","var(--edge)"); })
+    .on("click",(e,d)=>{ resaltar(d.id); const li=document.querySelector(`#lista li[data-id="${d.id}"]`); li && li.scrollIntoView({block:"nearest",behavior:"smooth"}); });
+  link.append("title").text(d=>`${datos.papers[d.source].id} — ${datos.papers[d.target].id}: ${d.w.toFixed(4)}`);
+
+  const sim=d3.forceSimulation(nodes)
+    .force("link",d3.forceLink(links).distance(d=>70+230*(1-norm(d.w))).strength(d=>.1+.5*norm(d.w)))
+    .force("charge",d3.forceManyBody().strength(-520))
+    .force("x",d3.forceX(W/2).strength(.04)).force("y",d3.forceY(H/2).strength(.06))
+    .force("center",d3.forceCenter(W/2,H/2))
+    .force("collide",d3.forceCollide(d=>radio(d.score)+4))
+    .on("tick",()=>{
+      link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y).attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);
+      node.attr("transform",d=>`translate(${d.x},${d.y})`);
+    });
+  node.call(d3.drag()
+    .on("start",(e,d)=>{ if(!e.active) sim.alphaTarget(.3).restart(); d.fx=d.x; d.fy=d.y; })
+    .on("drag",(e,d)=>{ d.fx=e.x; d.fy=e.y; })
+    .on("end",(e,d)=>{ if(!e.active) sim.alphaTarget(0); d.fx=null; d.fy=null; }));
+  if(seleccionado) marcarNodo(seleccionado);
+}
+
+function matriz(vis){
+  const A=datos.adyacencia, n=A.length, ids=datos.papers.map(p=>p.id);
+  const W=vis.clientWidth, H=vis.clientHeight, m=38, s=Math.min((W-m-10)/n,(H-m-10)/n);
+  const off=[]; A.forEach((r,i)=>r.forEach((v,j)=>{ if(i!==j) off.push(v); }));
+  const col=d3.scaleSequential(d3.interpolateBlues).domain([d3.min(off),d3.max(off)]);
+  const svg=d3.select(vis).append("svg").attr("viewBox",[0,0,W,H]);
+  const g=svg.append("g").attr("transform",`translate(${m},${m})`);
+  const tip=$("#tip");
+  A.forEach((r,i)=>r.forEach((v,j)=>{
+    g.append("rect").attr("x",j*s).attr("y",i*s).attr("width",s-1).attr("height",s-1)
+      .attr("fill",i===j?"var(--line)":col(v))
+      .on("mousemove",e=>{ const b=vis.getBoundingClientRect(); tip.style.display="block"; tip.style.left=(e.clientX-b.left+14)+"px"; tip.style.top=(e.clientY-b.top+10)+"px"; tip.innerHTML=`${ids[i]} — ${ids[j]}: <b>${v.toFixed(4)}</b>`; })
+      .on("mouseleave",()=>tip.style.display="none");
+  }));
+  const fs=Math.min(11,s*.6);
+  ids.forEach((id,i)=>{
+    g.append("text").text(id).attr("x",-4).attr("y",i*s+s/2).attr("dy","0.35em").attr("text-anchor","end").attr("font-size",fs).attr("fill","var(--muted)");
+    g.append("text").text(id).attr("transform",`translate(${i*s+s/2},-4) rotate(-90)`).attr("dy","0.35em").attr("font-size",fs).attr("fill","var(--muted)");
+  });
+  $("#nota").textContent = `Matriz de adyacencia ${n}×${n} (similitud coseno entre los vectores D2VsgA de los top-k, diagonal = 0). Escala de color entre ${d3.min(off).toFixed(3)} y ${d3.max(off).toFixed(3)}.`;
+}
+
+function resaltar(id){
+  seleccionado=id;
+  document.querySelectorAll("#lista li").forEach(li=>li.classList.toggle("hl",li.dataset.id===id));
+  marcarNodo(id);
+}
+function marcarNodo(id){
+  d3.selectAll("#vis circle").attr("stroke",d=>d && d.id===id?"var(--ink)":"var(--panel)").attr("stroke-width",d=>d && d.id===id?3.5:2);
+}
+function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function recortar(s,n){ s=String(s||""); return s.length>n? s.slice(0,n-1)+"…" : s; }
+
+$("#umbral").addEventListener("input",e=>{ $("#pct").textContent=e.target.value; dibujar(); });
+$("#t-g").onclick=()=>{ vista="grafo"; $("#t-g").classList.add("on"); $("#t-m").classList.remove("on"); dibujar(); };
+$("#t-m").onclick=()=>{ vista="matriz"; $("#t-m").classList.add("on"); $("#t-g").classList.remove("on"); dibujar(); };
+window.addEventListener("resize",()=>dibujar());
+</script>
+</body>
+</html>
